@@ -3,13 +3,15 @@ import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useWorldStore, AgentStatus } from '@/state/world.store';
 
-const MOVE_SPEED = 3;
+const MOVE_SPEED = 2.5;
+const ARRIVAL_THRESHOLD = 0.15;
 
 interface AgentProps {
   id: string;
   color: string;
   position: [number, number, number];
   status: AgentStatus;
+  movementState: 'idle' | 'walking' | 'sitting';
   isSelected: boolean;
   isHovered: boolean;
   onPointerOver: () => void;
@@ -22,6 +24,7 @@ export function AgentMesh({
   color,
   position,
   status,
+  movementState,
   isSelected,
   isHovered,
   onPointerOver,
@@ -29,13 +32,14 @@ export function AgentMesh({
   onClick,
 }: AgentProps) {
   const groupRef = useRef<THREE.Group>(null!);
-  const bodyRef = useRef<THREE.Mesh>(null!);
-  const headRef = useRef<THREE.Mesh>(null!);
   const ringRef = useRef<THREE.Mesh>(null!);
+  const pathRef = useRef<THREE.Line>(null!);
 
-  const updatePosition = useWorldStore((s) => s.updateAgentPosition);
-  const clearTarget = useWorldStore((s) => s.clearTarget);
-  const target = useWorldStore((s) => s.agents.find((a) => a.id === id)?.targetPosition);
+  const markArrived = useWorldStore((s) => s.markArrived);
+  const agent = useWorldStore((s) => s.agents.find((a) => a.id === id));
+  const target = agent?.targetPosition ?? null;
+  const slotId = agent?.slotId ?? null;
+  const meetingSlots = useWorldStore((s) => s.meetingSlots);
 
   const [bobPhase] = useState(() => Math.random() * Math.PI * 2);
 
@@ -49,127 +53,226 @@ export function AgentMesh({
     }
   }, [status]);
 
+  // Get target rotation for sitting
+  const targetRotY = useMemo(() => {
+    if (slotId) {
+      const slot = meetingSlots.find((s) => s.id === slotId);
+      return slot?.rotationY ?? 0;
+    }
+    return null;
+  }, [slotId, meetingSlots]);
+
   useFrame((state, delta) => {
     if (!groupRef.current) return;
-
     const t = state.clock.elapsedTime;
+    const current = groupRef.current.position;
 
-    // Idle bob animation
-    const bobY = Math.sin(t * 2 + bobPhase) * 0.05;
-    
-    // Move towards target
     if (target) {
-      const current = groupRef.current.position;
       const dir = new THREE.Vector3(target[0] - current.x, 0, target[2] - current.z);
       const dist = dir.length();
-      
-      if (dist > 0.1) {
+
+      if (dist > ARRIVAL_THRESHOLD) {
         dir.normalize();
         const step = Math.min(delta * MOVE_SPEED, dist);
         current.x += dir.x * step;
         current.z += dir.z * step;
-        
+
         // Face movement direction
         const angle = Math.atan2(dir.x, dir.z);
         groupRef.current.rotation.y = THREE.MathUtils.lerp(
           groupRef.current.rotation.y,
           angle,
-          delta * 8
+          delta * 6
         );
-        
-        // Walk bob
-        const walkBob = Math.sin(t * 8) * 0.08;
-        groupRef.current.position.y = walkBob;
-        
-        updatePosition(id, [current.x, 0, current.z]);
+
+        // Walk bob — up/down + slight lean
+        const walkBob = Math.sin(t * 10) * 0.06;
+        const walkLean = Math.sin(t * 10) * 0.03;
+        groupRef.current.position.y = Math.max(0, walkBob);
+        groupRef.current.children.forEach((child) => {
+          if (child.type === 'Mesh' || child.type === 'Group') {
+            // Not modifying children directly for perf
+          }
+        });
       } else {
-        clearTarget(id);
-        groupRef.current.position.y = bobY;
+        markArrived(id);
+        current.x = target[0];
+        current.z = target[2];
       }
     } else {
-      groupRef.current.position.y = bobY;
+      // Idle or sitting animation
+      if (movementState === 'sitting') {
+        // Settle to slot rotation
+        if (targetRotY !== null) {
+          groupRef.current.rotation.y = THREE.MathUtils.lerp(
+            groupRef.current.rotation.y,
+            targetRotY,
+            delta * 4
+          );
+        }
+        // Subtle breathing
+        groupRef.current.position.y = Math.sin(t * 1.5 + bobPhase) * 0.015;
+      } else {
+        // Idle bob
+        groupRef.current.position.y = Math.sin(t * 2 + bobPhase) * 0.04;
+      }
     }
 
     // Selection ring rotation
     if (ringRef.current) {
       ringRef.current.rotation.z = t * 1.5;
     }
+
+    // Update path line
+    if (pathRef.current && target) {
+      const geom = pathRef.current.geometry as THREE.BufferGeometry;
+      const pos = geom.attributes.position as THREE.BufferAttribute;
+      pos.setXYZ(0, current.x, 0.05, current.z);
+      pos.setXYZ(1, target[0], 0.05, target[2]);
+      pos.needsUpdate = true;
+    }
   });
 
   return (
-    <group
-      ref={groupRef}
-      position={position}
-      onPointerOver={(e) => { e.stopPropagation(); onPointerOver(); }}
-      onPointerOut={onPointerOut}
-      onClick={(e) => { e.stopPropagation(); onClick(); }}
-    >
-      {/* Body - capsule shape */}
-      <mesh ref={bodyRef} position={[0, 0.6, 0]} castShadow>
-        <capsuleGeometry args={[0.25, 0.5, 8, 16]} />
-        <meshStandardMaterial
-          color={isHovered ? '#ffffff' : color}
-          emissive={color}
-          emissiveIntensity={isHovered ? 0.5 : 0.15}
-          roughness={0.4}
-          metalness={0.3}
-        />
-      </mesh>
-
-      {/* Head */}
-      <mesh ref={headRef} position={[0, 1.2, 0]} castShadow>
-        <sphereGeometry args={[0.2, 16, 16]} />
-        <meshStandardMaterial
-          color={isHovered ? '#ffffff' : color}
-          emissive={color}
-          emissiveIntensity={isHovered ? 0.5 : 0.15}
-          roughness={0.3}
-          metalness={0.4}
-        />
-      </mesh>
-
-      {/* Eyes - two small emissive spheres */}
-      <mesh position={[0.08, 1.22, 0.17]}>
-        <sphereGeometry args={[0.04, 8, 8]} />
-        <meshStandardMaterial emissive="#ffffff" emissiveIntensity={2} color="#ffffff" />
-      </mesh>
-      <mesh position={[-0.08, 1.22, 0.17]}>
-        <sphereGeometry args={[0.04, 8, 8]} />
-        <meshStandardMaterial emissive="#ffffff" emissiveIntensity={2} color="#ffffff" />
-      </mesh>
-
-      {/* Status indicator floating above head */}
-      <mesh position={[0, 1.6, 0]}>
-        <sphereGeometry args={[0.06, 8, 8]} />
-        <meshStandardMaterial
-          emissive={statusColor}
-          emissiveIntensity={3}
-          color={statusColor}
-          transparent
-          opacity={0.9}
-        />
-      </mesh>
-
-      {/* Selection ring */}
-      {isSelected && (
-        <mesh ref={ringRef} position={[0, 0.05, 0]} rotation={[-Math.PI / 2, 0, 0]}>
-          <ringGeometry args={[0.5, 0.6, 32]} />
-          <meshStandardMaterial
-            color="#00d4aa"
-            emissive="#00d4aa"
-            emissiveIntensity={2}
-            transparent
-            opacity={0.7}
-            side={THREE.DoubleSide}
-          />
-        </mesh>
+    <>
+      {/* Path line to target */}
+      {target && (
+        <line ref={pathRef as any}>
+          <bufferGeometry>
+            <bufferAttribute
+              attach="attributes-position"
+              array={new Float32Array([
+                position[0], 0.05, position[2],
+                target[0], 0.05, target[2],
+              ])}
+              count={2}
+              itemSize={3}
+            />
+          </bufferGeometry>
+          <lineBasicMaterial color={color} transparent opacity={0.3} />
+        </line>
       )}
 
-      {/* Shadow blob */}
-      <mesh position={[0, 0.01, 0]} rotation={[-Math.PI / 2, 0, 0]}>
-        <circleGeometry args={[0.3, 16]} />
-        <meshStandardMaterial color="#000000" transparent opacity={0.3} />
-      </mesh>
-    </group>
+      {/* Destination marker */}
+      {target && (
+        <DestinationMarker position={target} color={color} />
+      )}
+
+      <group
+        ref={groupRef}
+        position={position}
+        onPointerOver={(e) => { e.stopPropagation(); onPointerOver(); document.body.style.cursor = 'pointer'; }}
+        onPointerOut={() => { onPointerOut(); document.body.style.cursor = 'auto'; }}
+        onClick={(e) => { e.stopPropagation(); onClick(); }}
+      >
+        {/* Body — capsule */}
+        <mesh position={[0, 0.6, 0]} castShadow>
+          <capsuleGeometry args={[0.22, 0.45, 8, 16]} />
+          <meshStandardMaterial
+            color={isHovered ? '#ffffff' : color}
+            emissive={color}
+            emissiveIntensity={isSelected ? 0.6 : isHovered ? 0.4 : 0.12}
+            roughness={0.35}
+            metalness={0.3}
+          />
+        </mesh>
+
+        {/* Head */}
+        <mesh position={[0, 1.15, 0]} castShadow>
+          <sphereGeometry args={[0.18, 16, 16]} />
+          <meshStandardMaterial
+            color={isHovered ? '#ffffff' : color}
+            emissive={color}
+            emissiveIntensity={isSelected ? 0.6 : isHovered ? 0.4 : 0.12}
+            roughness={0.3}
+            metalness={0.35}
+          />
+        </mesh>
+
+        {/* Eyes */}
+        <mesh position={[0.07, 1.17, 0.16]}>
+          <sphereGeometry args={[0.035, 8, 8]} />
+          <meshStandardMaterial emissive="#ffffff" emissiveIntensity={2.5} color="#ffffff" />
+        </mesh>
+        <mesh position={[-0.07, 1.17, 0.16]}>
+          <sphereGeometry args={[0.035, 8, 8]} />
+          <meshStandardMaterial emissive="#ffffff" emissiveIntensity={2.5} color="#ffffff" />
+        </mesh>
+
+        {/* Status indicator */}
+        <mesh position={[0, 1.5, 0]}>
+          <sphereGeometry args={[0.05, 8, 8]} />
+          <meshStandardMaterial
+            emissive={statusColor}
+            emissiveIntensity={3}
+            color={statusColor}
+            transparent
+            opacity={0.9}
+          />
+        </mesh>
+
+        {/* Selection ring + outer glow */}
+        {isSelected && (
+          <>
+            <mesh ref={ringRef} position={[0, 0.05, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+              <ringGeometry args={[0.45, 0.55, 32]} />
+              <meshStandardMaterial
+                color="#00d4aa"
+                emissive="#00d4aa"
+                emissiveIntensity={2.5}
+                transparent
+                opacity={0.8}
+                side={THREE.DoubleSide}
+              />
+            </mesh>
+            <mesh position={[0, 0.04, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+              <ringGeometry args={[0.55, 0.7, 32]} />
+              <meshStandardMaterial
+                color="#00d4aa"
+                emissive="#00d4aa"
+                emissiveIntensity={1}
+                transparent
+                opacity={0.2}
+                side={THREE.DoubleSide}
+              />
+            </mesh>
+          </>
+        )}
+
+        {/* Shadow blob */}
+        <mesh position={[0, 0.01, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+          <circleGeometry args={[0.28, 16]} />
+          <meshStandardMaterial color="#000000" transparent opacity={0.35} />
+        </mesh>
+      </group>
+    </>
+  );
+}
+
+/** Pulsing destination circle on the floor */
+function DestinationMarker({ position, color }: { position: [number, number, number]; color: string }) {
+  const ref = useRef<THREE.Mesh>(null!);
+
+  useFrame((state) => {
+    if (ref.current) {
+      const t = state.clock.elapsedTime;
+      const scale = 1 + Math.sin(t * 4) * 0.15;
+      ref.current.scale.set(scale, scale, 1);
+      (ref.current.material as THREE.MeshStandardMaterial).opacity = 0.3 + Math.sin(t * 3) * 0.15;
+    }
+  });
+
+  return (
+    <mesh ref={ref} position={[position[0], 0.03, position[2]]} rotation={[-Math.PI / 2, 0, 0]}>
+      <ringGeometry args={[0.12, 0.2, 16]} />
+      <meshStandardMaterial
+        color={color}
+        emissive={color}
+        emissiveIntensity={2}
+        transparent
+        opacity={0.4}
+        side={THREE.DoubleSide}
+      />
+    </mesh>
   );
 }

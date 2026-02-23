@@ -9,11 +9,20 @@ const statusConfig: Record<AgentStatus, { label: string; colorClass: string }> =
   offline: { label: 'Offline', colorClass: 'bg-[hsl(var(--status-offline))]' },
 };
 
+const movementLabels: Record<string, string> = {
+  idle: '⏸ Standing',
+  walking: '🚶 Walking',
+  sitting: '🪑 Seated',
+};
+
 export function AgentPanel() {
   const agents = useWorldStore((s) => s.agents);
   const selectedAgentId = useWorldStore((s) => s.selectedAgentId);
   const setSelectedAgent = useWorldStore((s) => s.setSelectedAgent);
   const updateAgentStatus = useWorldStore((s) => s.updateAgentStatus);
+  const meetingMode = useWorldStore((s) => s.meetingMode);
+  const commandAllToTable = useWorldStore((s) => s.commandAllToTable);
+  const dismissFromTable = useWorldStore((s) => s.dismissFromTable);
 
   const selected = agents.find((a) => a.id === selectedAgentId);
 
@@ -40,6 +49,20 @@ export function AgentPanel() {
         </p>
       </div>
 
+      {/* Meeting button */}
+      <div className="px-4 py-3 border-b border-border">
+        <button
+          onClick={() => meetingMode ? dismissFromTable() : commandAllToTable()}
+          className={`w-full py-2.5 px-4 rounded-lg text-xs font-mono font-semibold tracking-wider uppercase transition-all duration-300 ${
+            meetingMode
+              ? 'bg-destructive/20 text-destructive border border-destructive/30 hover:bg-destructive/30'
+              : 'bg-primary/15 text-primary border border-primary/30 hover:bg-primary/25 glow-primary'
+          }`}
+        >
+          {meetingMode ? '✕ Dismiss Meeting' : '◉ Call All to Table'}
+        </button>
+      </div>
+
       {/* Agent list */}
       <div className="flex-1 overflow-y-auto scrollbar-thin p-2 space-y-1">
         {agents.map((agent) => {
@@ -64,7 +87,12 @@ export function AgentPanel() {
                     </span>
                     <span className={`status-dot ${cfg.colorClass}`} />
                   </div>
-                  <span className="text-xs text-muted-foreground">{agent.role}</span>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-muted-foreground">{agent.role}</span>
+                    <span className="text-[10px] text-muted-foreground/60">
+                      {movementLabels[agent.movementState]}
+                    </span>
+                  </div>
                 </div>
               </div>
             </button>
@@ -84,6 +112,9 @@ export function AgentPanel() {
                 <span className="text-xs text-muted-foreground">
                   {statusConfig[selected.status].label}
                 </span>
+                <span className="text-xs text-muted-foreground/60">
+                  · {movementLabels[selected.movementState]}
+                </span>
               </div>
             </div>
           </div>
@@ -101,10 +132,15 @@ export function AgentPanel() {
 
           <div className="text-xs text-muted-foreground font-mono">
             Pos: ({selected.position[0].toFixed(1)}, {selected.position[2].toFixed(1)})
+            {selected.targetPosition && (
+              <span className="text-primary/70">
+                {' → '}({selected.targetPosition[0].toFixed(1)}, {selected.targetPosition[2].toFixed(1)})
+              </span>
+            )}
           </div>
 
           <p className="text-xs text-muted-foreground italic">
-            Click the floor to move this agent
+            Click the floor to move · Click the table to call meeting
           </p>
         </div>
       )}
