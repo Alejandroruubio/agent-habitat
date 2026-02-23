@@ -13,6 +13,11 @@ import * as THREE from 'three';
 import { Room } from './Room';
 import { MeetingTable } from './MeetingTable';
 import { AgentMesh } from './Agent';
+import { AgentLabels } from './ui/AgentLabels';
+import { DebugOverlay } from './ui/DebugOverlay';
+import { OpsWall } from './zones/OpsWall';
+import { InboxStation } from './zones/InboxStation';
+import { AlertsBeacon } from './zones/AlertsBeacon';
 import { useWorldStore } from '@/state/world.store';
 
 export function WorldCanvas() {
@@ -27,8 +32,8 @@ export function WorldCanvas() {
     (e: any) => {
       if (selectedAgentId && e.point) {
         const p = e.point;
-        const x = THREE.MathUtils.clamp(p.x, -10, 10);
-        const z = THREE.MathUtils.clamp(p.z, -10, 10);
+        const x = THREE.MathUtils.clamp(p.x, -12, 12);
+        const z = THREE.MathUtils.clamp(p.z, -12, 12);
         setAgentTarget(selectedAgentId, [x, 0, z]);
       }
     },
@@ -40,77 +45,67 @@ export function WorldCanvas() {
       shadows
       gl={{
         antialias: true,
-        toneMapping: THREE.NoToneMapping, // Handled by postprocessing
+        toneMapping: THREE.NoToneMapping,
         outputColorSpace: THREE.SRGBColorSpace,
       }}
       camera={{
-        position: [12, 12, 12],
-        fov: 30,
+        position: [14, 14, 14],
+        fov: 28,
         near: 0.1,
-        far: 100,
+        far: 120,
       }}
       style={{ background: '#08080f' }}
     >
       <Suspense fallback={null}>
-        {/* === Lighting — cinematic 3-point === */}
-        <ambientLight intensity={0.12} color="#9aaec0" />
+        {/* === Cinematic Lighting === */}
+        <ambientLight intensity={0.1} color="#8899bb" />
 
-        {/* Key light — warm, upper right */}
+        {/* Key light — warm */}
         <directionalLight
-          position={[10, 14, 6]}
-          intensity={1.4}
+          position={[10, 16, 6]}
+          intensity={1.3}
           color="#ffeedd"
           castShadow
           shadow-mapSize-width={2048}
           shadow-mapSize-height={2048}
-          shadow-camera-far={35}
-          shadow-camera-left={-12}
-          shadow-camera-right={12}
-          shadow-camera-top={12}
-          shadow-camera-bottom={-12}
+          shadow-camera-far={40}
+          shadow-camera-left={-14}
+          shadow-camera-right={14}
+          shadow-camera-top={14}
+          shadow-camera-bottom={-14}
           shadow-bias={-0.0008}
           shadow-normalBias={0.02}
         />
 
-        {/* Fill light — cool, from left */}
-        <directionalLight
-          position={[-8, 10, -4]}
-          intensity={0.35}
-          color="#7799cc"
-        />
+        {/* Fill — cool */}
+        <directionalLight position={[-10, 10, -6]} intensity={0.3} color="#6688bb" />
 
-        {/* Rim light — teal, from behind */}
-        <pointLight position={[0, 8, -10]} intensity={0.7} color="#00d4aa" distance={25} />
+        {/* Rim — teal accent from back */}
+        <pointLight position={[0, 8, -12]} intensity={0.6} color="#00d4aa" distance={28} />
 
-        {/* Accent light over table */}
+        {/* Accent spotlight over table */}
         <spotLight
-          position={[0, 6, 0]}
-          intensity={0.6}
+          position={[0, 7, 0]}
+          intensity={0.5}
           color="#ddeeff"
           angle={Math.PI / 5}
           penumbra={0.8}
-          distance={12}
+          distance={14}
           castShadow={false}
-          target-position={[0, 0, 0]}
         />
 
-        {/* Environment for reflections */}
         <Environment preset="night" />
 
-        {/* Room + props */}
+        {/* Scene */}
         <Room />
-
-        {/* Meeting Table */}
         <MeetingTable />
+        <OpsWall />
+        <InboxStation />
+        <AlertsBeacon />
 
-        {/* Floor click target (invisible) */}
-        <mesh
-          rotation={[-Math.PI / 2, 0, 0]}
-          position={[0, 0, 0]}
-          onClick={handleFloorClick}
-          visible={false}
-        >
-          <planeGeometry args={[24, 24]} />
+        {/* Floor click target */}
+        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0, 0]} onClick={handleFloorClick} visible={false}>
+          <planeGeometry args={[28, 28]} />
           <meshBasicMaterial />
         </mesh>
 
@@ -131,19 +126,25 @@ export function WorldCanvas() {
           />
         ))}
 
-        {/* Camera controls — limited rotation */}
+        {/* Labels & bubbles */}
+        <AgentLabels />
+
+        {/* Debug overlay */}
+        <DebugOverlay />
+
+        {/* Camera controls */}
         <OrbitControls
           target={[0, 0.5, 0]}
           minDistance={8}
-          maxDistance={22}
+          maxDistance={26}
           maxPolarAngle={Math.PI / 3}
           minPolarAngle={Math.PI / 7}
           maxAzimuthAngle={Math.PI / 3}
           minAzimuthAngle={-Math.PI / 3}
-          enablePan={true}
+          enablePan
           panSpeed={0.5}
-          enableRotate={true}
-          rotateSpeed={0.25}
+          enableRotate
+          rotateSpeed={0.2}
           enableDamping
           dampingFactor={0.05}
         />
@@ -151,8 +152,8 @@ export function WorldCanvas() {
         {/* === Postprocessing === */}
         <EffectComposer multisampling={4}>
           <Bloom
-            intensity={0.35}
-            luminanceThreshold={0.7}
+            intensity={0.3}
+            luminanceThreshold={0.65}
             luminanceSmoothing={0.9}
             mipmapBlur
           />
@@ -166,7 +167,7 @@ export function WorldCanvas() {
             worldProximityThreshold={0.3}
             worldProximityFalloff={0.1}
           />
-          <Vignette offset={0.25} darkness={0.55} />
+          <Vignette offset={0.25} darkness={0.5} />
           <ToneMapping mode={ToneMappingMode.AGX} />
         </EffectComposer>
       </Suspense>
